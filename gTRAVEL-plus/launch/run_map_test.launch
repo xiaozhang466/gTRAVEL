@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<launch>
+    <rosparam file="$(find gtravelp)/config/map_test_params.yaml" command="load" />
+
+    <arg name="pcd_dir" default="/home/ros/gTRAVEL_ws/src/map_test/pcd" />
+    <arg name="map_test_hz" default="10" />
+    <arg name="start_idx" default="0" />
+    <arg name="stop" default="false" />
+    <arg name="rviz" default="true" />
+
+    <param name="/pcd_dir" type="str" value="$(arg pcd_dir)" />
+    <param name="/map_test_hz" type="int" value="$(arg map_test_hz)" />
+    <param name="/start_idx" type="int" value="$(arg start_idx)" />
+    <param name="/stop" type="bool" value="$(arg stop)" />
+    <param name="/save_results/save_labels" type="bool" value="false" />
+    <param name="/evaluation/enable_eval" type="bool" value="false" />
+
+    <node name="gtravelp_maptest_publisher" pkg="gtravelp" type="gtravelp_maptest_publisher" output="screen"/>
+    <node name="gtravelp_node" pkg="gtravelp" type="gtravelp_node" output="screen" />
+
+    <node if="$(arg rviz)" name="rviz" pkg="rviz" type="rviz" args="-d $(find gtravelp)/rviz/gtravelp_kitti.rviz"/>
+</launch>
