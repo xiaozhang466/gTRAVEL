@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="pcd_dir" default="/home/ros/gTRAVEL_ws/src/map_test/pcd"/>
+  <arg name="map_test_hz" default="10"/>
+  <arg name="start_idx" default="0"/>
+  <arg name="stop" default="false"/>
+  <arg name="rviz" default="false"/>
+  <arg name="frame_id" default="map"/>
+  <arg name="cloud_topic" default="/patchworkpp/input_cloud"/>
+
+  <node name="patchworkpp_pcd_player" pkg="patchworkpp" type="pcd_player" output="screen">
+    <param name="pcd_dir" value="$(arg pcd_dir)"/>
+    <param name="topic" value="$(arg cloud_topic)"/>
+    <param name="frame_id" value="$(arg frame_id)"/>
+    <param name="map_test_hz" value="$(arg map_test_hz)"/>
+    <param name="start_idx" value="$(arg start_idx)"/>
+    <param name="stop" value="$(arg stop)"/>
+    <param name="latch" value="true"/>
+  </node>
+
+  <node name="ground_segmentation" pkg="patchworkpp" type="demo" output="screen">
+    <rosparam command="load" file="$(find patchworkpp)/config/map_test_params.yaml"/>
+    <param name="cloud_topic" value="$(arg cloud_topic)"/>
+  </node>
+
+  <node if="$(arg rviz)" name="patchworkpp_rviz" pkg="rviz" type="rviz"
+        args="-d $(find patchworkpp)/rviz/demo.rviz"/>
+</launch>

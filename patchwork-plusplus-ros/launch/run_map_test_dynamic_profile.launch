@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="pcd_dir" default="/home/ros/gTRAVEL_ws/src/map_test/pcd"/>
+  <arg name="map_test_hz" default="10"/>
+  <arg name="start_idx" default="0"/>
+  <arg name="stop" default="false"/>
+  <arg name="rviz" default="true"/>
+  <arg name="frame_id" default="map"/>
+  <arg name="cloud_topic" default="/patchworkpp/input_cloud"/>
+
+  <arg name="pose_file" default="/home/ros/gTRAVEL_ws/src/map_test/pose.json"/>
+  <arg name="output_csv" default="/home/ros/gTRAVEL_ws/src/map_test/map/dynamic_width_profile_patchworkpp.csv"/>
+  <arg name="auto_stop" default="true"/>
+  <arg name="expected_frames" default="-1"/>
+
+  <arg name="x_min" default="0.5"/>
+  <arg name="x_max" default="8.0"/>
+  <arg name="z_min" default="-1.0"/>
+  <arg name="z_max" default="2.5"/>
+  <arg name="min_lateral" default="0.2"/>
+  <arg name="safety_margin" default="0.15"/>
+  <arg name="edge_margin" default="0.10"/>
+  <arg name="min_half_width" default="0.5"/>
+  <arg name="max_half_width" default="2.0"/>
+  <arg name="default_half_width" default="1.0"/>
+  <arg name="smoothing_alpha" default="0.4"/>
+
+  <include file="$(find patchworkpp)/launch/run_map_test_pcd.launch">
+    <arg name="pcd_dir" value="$(arg pcd_dir)"/>
+    <arg name="map_test_hz" value="$(arg map_test_hz)"/>
+    <arg name="start_idx" value="$(arg start_idx)"/>
+    <arg name="stop" value="$(arg stop)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="frame_id" value="$(arg frame_id)"/>
+    <arg name="cloud_topic" value="$(arg cloud_topic)"/>
+  </include>
+
+  <node name="collect_dynamic_width_profile"
+        pkg="gtravelp"
+        type="collect_dynamic_width_profile.py"
+        required="true"
+        output="screen">
+    <param name="pose_file" value="$(arg pose_file)"/>
+    <param name="output_csv" value="$(arg output_csv)"/>
+    <param name="auto_stop" value="$(arg auto_stop)"/>
+    <param name="expected_frames" value="$(arg expected_frames)"/>
+
+    <param name="ground_topic" value="/ground_segmentation/ground"/>
+    <param name="nonground_topic" value="/ground_segmentation/nonground"/>
+
+    <param name="x_min" value="$(arg x_min)"/>
+    <param name="x_max" value="$(arg x_max)"/>
+    <param name="z_min" value="$(arg z_min)"/>
+    <param name="z_max" value="$(arg z_max)"/>
+    <param name="min_lateral" value="$(arg min_lateral)"/>
+    <param name="safety_margin" value="$(arg safety_margin)"/>
+    <param name="edge_margin" value="$(arg edge_margin)"/>
+    <param name="min_half_width" value="$(arg min_half_width)"/>
+    <param name="max_half_width" value="$(arg max_half_width)"/>
+    <param name="default_half_width" value="$(arg default_half_width)"/>
+    <param name="smoothing_alpha" value="$(arg smoothing_alpha)"/>
+  </node>
+</launch>
