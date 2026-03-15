@@ -1,9 +1,10 @@
 # ROS工作区顶层CMakeLists.txt不上传
-CMakeLists.txt
+/CMakeLists.txt
 
 # map_test中的大文件夹不上传
 map_test/map/
 map_test/pcd/
+map_315
 
 # 编译产物
 *.pyc
