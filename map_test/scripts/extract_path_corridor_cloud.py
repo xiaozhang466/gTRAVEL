@@ -542,11 +542,25 @@ def build_dynamic_corridor_mask(
         poly_i = np.round(poly).astype(np.int32)
         cv2.fillConvexPoly(base, poly_i, color=255)
 
-        # End-cap circles reduce tiny gaps between consecutive segments.
-        cap0 = int(round(max(lw0, rw0)))
-        cap1 = int(round(max(lw1, rw1)))
-        cv2.circle(base, (int(round(p0[0])), int(round(p0[1]))), cap0, color=255, thickness=-1)
-        cv2.circle(base, (int(round(p1[0])), int(round(p1[1]))), cap1, color=255, thickness=-1)
+        # Asymmetric end-caps: avoid forcing left/right to max(lw, rw).
+        cap0_r = max(1.0, 0.5 * (lw0 + rw0))
+        cap1_r = max(1.0, 0.5 * (lw1 + rw1))
+        cap0_c = p0 + n * (0.5 * (lw0 - rw0))
+        cap1_c = p1 + n * (0.5 * (lw1 - rw1))
+        cv2.circle(
+            base,
+            (int(round(cap0_c[0])), int(round(cap0_c[1]))),
+            int(round(cap0_r)),
+            color=255,
+            thickness=-1,
+        )
+        cv2.circle(
+            base,
+            (int(round(cap1_c[0])), int(round(cap1_c[1]))),
+            int(round(cap1_r)),
+            color=255,
+            thickness=-1,
+        )
 
     return base > 0
 

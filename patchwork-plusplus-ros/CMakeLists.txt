@@ -74,7 +74,7 @@ target_link_libraries(video ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRAR
 add_dependencies(video patchworkpp_generate_messages_cpp)
 
 add_executable(pcd_player src/pcd_player.cpp)
-target_link_libraries(pcd_player ${catkin_LIBRARIES} ${PCL_LIBRARIES})
+target_link_libraries(pcd_player ${catkin_LIBRARIES} ${PCL_LIBRARIES} usb-1.0)
 add_dependencies(pcd_player patchworkpp_generate_messages_cpp)
 
 
