@@ -13,8 +13,10 @@
   <arg name="auto_stop" default="true"/>
   <arg name="expected_frames" default="-1"/>
 
-  <arg name="x_min" default="0.5"/>
-  <arg name="x_max" default="8.0"/>
+  <arg name="x_min" default="-0.5"/>
+  <arg name="x_max" default="0.5"/>
+  <arg name="x_slice_min" default="$(arg x_min)"/>
+  <arg name="x_slice_max" default="$(arg x_max)"/>
   <arg name="z_min" default="-1.0"/>
   <arg name="z_max" default="2.5"/>
   <arg name="min_lateral" default="0.2"/>
@@ -24,6 +26,11 @@
   <arg name="max_half_width" default="2.0"/>
   <arg name="default_half_width" default="1.0"/>
   <arg name="smoothing_alpha" default="0.4"/>
+  <arg name="obs_percentile" default="10.0"/>
+  <arg name="max_history_frames" default="50"/>
+  <arg name="max_history_distance" default="10.0"/>
+  <arg name="max_history_yaw_diff_deg" default="60.0"/>
+  <arg name="buffer_point_radius" default="25.0"/>
 
   <include file="$(find patchworkpp)/launch/run_map_test_pcd.launch">
     <arg name="pcd_dir" value="$(arg pcd_dir)"/>
@@ -50,6 +57,8 @@
 
     <param name="x_min" value="$(arg x_min)"/>
     <param name="x_max" value="$(arg x_max)"/>
+    <param name="x_slice_min" value="$(arg x_slice_min)"/>
+    <param name="x_slice_max" value="$(arg x_slice_max)"/>
     <param name="z_min" value="$(arg z_min)"/>
     <param name="z_max" value="$(arg z_max)"/>
     <param name="min_lateral" value="$(arg min_lateral)"/>
@@ -59,5 +68,10 @@
     <param name="max_half_width" value="$(arg max_half_width)"/>
     <param name="default_half_width" value="$(arg default_half_width)"/>
     <param name="smoothing_alpha" value="$(arg smoothing_alpha)"/>
+    <param name="obs_percentile" value="$(arg obs_percentile)"/>
+    <param name="max_history_frames" value="$(arg max_history_frames)"/>
+    <param name="max_history_distance" value="$(arg max_history_distance)"/>
+    <param name="max_history_yaw_diff_deg" value="$(arg max_history_yaw_diff_deg)"/>
+    <param name="buffer_point_radius" value="$(arg buffer_point_radius)"/>
   </node>
 </launch>
