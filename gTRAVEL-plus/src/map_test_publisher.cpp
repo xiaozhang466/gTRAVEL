@@ -5,10 +5,12 @@
 #include "utils/utils.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <dirent.h>
 #include <iostream>
 #include <limits>
+#include <thread>
 #include <string>
 #include <sys/stat.h>
 #include <vector>
@@ -94,12 +96,18 @@ int main(int argc, char** argv) {
     int start_idx;
     int map_test_hz;
     bool step_mode;
+    bool wait_subscribers;
+    int min_subscribers;
+    double startup_delay_sec;
 
     nh.param<std::string>("/node_topic", node_topic, "/node");
     nh.param<std::string>("/pcd_dir", pcd_dir, "/");
     nh.param<int>("/start_idx", start_idx, 0);
     nh.param<int>("/map_test_hz", map_test_hz, 10);
     nh.param<bool>("/stop", step_mode, false);
+    nh.param<bool>("/map_test_wait_subscribers", wait_subscribers, true);
+    nh.param<int>("/map_test_min_subscribers", min_subscribers, 1);
+    nh.param<double>("/map_test_startup_delay_sec", startup_delay_sec, 2.0);
 
     std::cout << "\033[1;32mNode topic: " << node_topic << "\033[0m" << std::endl;
     std::cout << "\033[1;32mPCD directory: " << pcd_dir << "\033[0m" << std::endl;
@@ -118,6 +126,22 @@ int main(int argc, char** argv) {
 
     ros::Publisher node_publisher = nh.advertise<gtravelp::node>(node_topic, 100, true);
     ros::Rate rate(map_test_hz);
+
+    if (wait_subscribers) {
+        std::cout << "\033[1;32m[MapTest Publisher] Waiting subscribers on " << node_topic
+                  << " (>= " << min_subscribers << ")\033[0m" << std::endl;
+        while (ros::ok() && static_cast<int>(node_publisher.getNumSubscribers()) < std::max(1, min_subscribers)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        std::cout << "\033[1;32m[MapTest Publisher] Subscribers ready: "
+                  << node_publisher.getNumSubscribers() << "\033[0m" << std::endl;
+    }
+
+    if (startup_delay_sec > 0.0) {
+        std::cout << "\033[1;32m[MapTest Publisher] Startup delay: " << startup_delay_sec
+                  << " sec\033[0m" << std::endl;
+        ros::Duration(startup_delay_sec).sleep();
+    }
 
     std::cout << "\033[1;32m[MapTest Publisher] Total " << pcd_files.size() << " clouds are loaded\033[0m" << std::endl;
     for (int i = start_idx; i < static_cast<int>(pcd_files.size()) && ros::ok(); ++i) {

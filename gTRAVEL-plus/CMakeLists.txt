@@ -96,5 +96,6 @@ target_link_libraries(${PROJECT_NAME}_maptest_publisher
 catkin_install_python(
   PROGRAMS
   scripts/collect_dynamic_width_profile.py
+  scripts/save_ground_green_pcd.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

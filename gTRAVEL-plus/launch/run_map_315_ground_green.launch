@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="pcd_dir" default="/home/ros/gTRAVEL_ws/src/map_315/pcd" />
+    <arg name="output_dir" default="/home/ros/gTRAVEL_ws/src/map_315/pcd_ground_green" />
+
+    <arg name="map_test_hz" default="10" />
+    <arg name="start_idx" default="0" />
+    <arg name="map_test_wait_subscribers" default="true" />
+    <arg name="map_test_min_subscribers" default="1" />
+    <arg name="map_test_startup_delay_sec" default="2.0" />
+    <arg name="stop" default="false" />
+    <arg name="rviz" default="false" />
+
+    <arg name="expected_frames" default="-1" />
+    <arg name="auto_stop" default="true" />
+    <arg name="overwrite" default="true" />
+
+    <include file="$(find gtravelp)/launch/run_map_test.launch">
+        <arg name="pcd_dir" value="$(arg pcd_dir)" />
+        <arg name="map_test_hz" value="$(arg map_test_hz)" />
+        <arg name="start_idx" value="$(arg start_idx)" />
+        <arg name="map_test_wait_subscribers" value="$(arg map_test_wait_subscribers)" />
+        <arg name="map_test_min_subscribers" value="$(arg map_test_min_subscribers)" />
+        <arg name="map_test_startup_delay_sec" value="$(arg map_test_startup_delay_sec)" />
+        <arg name="stop" value="$(arg stop)" />
+        <arg name="rviz" value="$(arg rviz)" />
+    </include>
+
+    <node name="save_ground_green_pcd"
+          pkg="gtravelp"
+          type="save_ground_green_pcd.py"
+          required="true"
+          output="screen">
+        <param name="pcd_dir" value="$(arg pcd_dir)" />
+        <param name="output_dir" value="$(arg output_dir)" />
+        <param name="ground_topic" value="/gtravelp/ground_pc" />
+        <param name="nonground_topic" value="/gtravelp/nonground_pc" />
+        <param name="start_idx" value="$(arg start_idx)" />
+
+        <param name="expected_frames" value="$(arg expected_frames)" />
+        <param name="auto_stop" value="$(arg auto_stop)" />
+        <param name="overwrite" value="$(arg overwrite)" />
+
+        <param name="green_r" value="0" />
+        <param name="green_g" value="255" />
+        <param name="green_b" value="0" />
+        <param name="nonground_r" value="255" />
+        <param name="nonground_g" value="255" />
+        <param name="nonground_b" value="255" />
+    </node>
+</launch>

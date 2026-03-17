@@ -5,12 +5,18 @@
     <arg name="pcd_dir" default="/home/ros/gTRAVEL_ws/src/map_test/pcd" />
     <arg name="map_test_hz" default="10" />
     <arg name="start_idx" default="0" />
+    <arg name="map_test_wait_subscribers" default="true" />
+    <arg name="map_test_min_subscribers" default="1" />
+    <arg name="map_test_startup_delay_sec" default="2.0" />
     <arg name="stop" default="false" />
     <arg name="rviz" default="true" />
 
     <param name="/pcd_dir" type="str" value="$(arg pcd_dir)" />
     <param name="/map_test_hz" type="int" value="$(arg map_test_hz)" />
     <param name="/start_idx" type="int" value="$(arg start_idx)" />
+    <param name="/map_test_wait_subscribers" type="bool" value="$(arg map_test_wait_subscribers)" />
+    <param name="/map_test_min_subscribers" type="int" value="$(arg map_test_min_subscribers)" />
+    <param name="/map_test_startup_delay_sec" type="double" value="$(arg map_test_startup_delay_sec)" />
     <param name="/stop" type="bool" value="$(arg stop)" />
     <param name="/save_results/save_labels" type="bool" value="false" />
     <param name="/evaluation/enable_eval" type="bool" value="false" />
