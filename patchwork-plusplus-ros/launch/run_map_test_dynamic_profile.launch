@@ -14,7 +14,7 @@
   <arg name="expected_frames" default="-1"/>
 
   <arg name="x_min" default="-0.5"/>
-  <arg name="x_max" default="0.5"/>
+  <arg name="x_max" default="2.0"/>
   <arg name="x_slice_min" default="$(arg x_min)"/>
   <arg name="x_slice_max" default="$(arg x_max)"/>
   <arg name="z_min" default="-1.0"/>
@@ -26,7 +26,7 @@
   <arg name="max_half_width" default="2.0"/>
   <arg name="default_half_width" default="1.0"/>
   <arg name="smoothing_alpha" default="0.4"/>
-  <arg name="obs_percentile" default="10.0"/>
+  <arg name="obs_percentile" default="5.0"/>
   <arg name="max_history_frames" default="50"/>
   <arg name="max_history_distance" default="10.0"/>
   <arg name="max_history_yaw_diff_deg" default="60.0"/>

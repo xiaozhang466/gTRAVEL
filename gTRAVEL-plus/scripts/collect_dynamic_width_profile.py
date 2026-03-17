@@ -225,7 +225,7 @@ class WidthCollector:
         self.auto_stop = bool(rospy.get_param("~auto_stop", True))
 
         legacy_x_min = float(rospy.get_param("~x_min", -0.5))
-        legacy_x_max = float(rospy.get_param("~x_max", 0.5))
+        legacy_x_max = float(rospy.get_param("~x_max", 2.0))
         self.x_slice_min = float(rospy.get_param("~x_slice_min", legacy_x_min))
         self.x_slice_max = float(rospy.get_param("~x_slice_max", legacy_x_max))
         self.z_min = float(rospy.get_param("~z_min", -1.0))
@@ -240,7 +240,7 @@ class WidthCollector:
         self.smoothing_alpha = float(rospy.get_param("~smoothing_alpha", 0.4))
 
         self.ground_percentile = float(rospy.get_param("~ground_percentile", 90.0))
-        self.obs_percentile = float(rospy.get_param("~obs_percentile", 10.0))
+        self.obs_percentile = float(rospy.get_param("~obs_percentile", 5.0))
         self.min_ground_pts = int(rospy.get_param("~min_ground_pts", 20))
         self.min_obs_pts = int(rospy.get_param("~min_obs_pts", 10))
 
