@@ -59,6 +59,56 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--invert-pose", action="store_true", help="Use inverse of each pose matrix.")
     parser.add_argument("--voxel-size", type=float, default=0.0, help="Optional voxel downsample size in meters.")
+    parser.add_argument(
+        "--max-z",
+        type=float,
+        default=float("inf"),
+        help="Keep points with height <= max-z. Height is measured along --height-up.",
+    )
+    parser.add_argument(
+        "--min-z",
+        type=float,
+        default=float("-inf"),
+        help="Keep points with height >= min-z. Height is measured along --height-up.",
+    )
+    parser.add_argument(
+        "--height-up",
+        type=float,
+        nargs=3,
+        metavar=("UX", "UY", "UZ"),
+        default=(0.0, 0.0, 1.0),
+        help="Up vector in global frame for height filtering. Default: 0 0 1.",
+    )
+    parser.add_argument(
+        "--height-ref",
+        type=float,
+        default=0.0,
+        help="Reference height origin along --height-up (meters).",
+    )
+    parser.add_argument(
+        "--auto-height-ref-from-ground",
+        action="store_true",
+        help="Auto set height reference to median height of ground-color points (global mode only).",
+    )
+    parser.add_argument(
+        "--local-height-filter",
+        action="store_true",
+        default=True,
+        help="Filter height in each frame's local sensor coordinates before stitching. "
+             "Robust to SLAM gravity direction drift. Default: on.",
+    )
+    parser.add_argument(
+        "--no-local-height-filter",
+        dest="local_height_filter",
+        action="store_false",
+        help="Filter height in global coordinates after stitching (legacy behavior).",
+    )
+    parser.add_argument(
+        "--ground-rgb-u32",
+        type=lambda s: int(s, 0),
+        default=0x00FF00,
+        help="Ground color value for auto height reference (default: 0x00FF00).",
+    )
     return parser.parse_args()
 
 
@@ -338,6 +388,11 @@ def main() -> None:
         raise ValueError("--frame-stride must be > 0")
     if args.start_idx < 0:
         raise ValueError("--start-idx must be >= 0")
+    if args.min_z > args.max_z:
+        raise ValueError("--min-z must be <= --max-z")
+    up = np.asarray(args.height_up, dtype=np.float64)
+    if np.linalg.norm(up) < 1e-12:
+        raise ValueError("--height-up norm must be > 0")
 
     files = collect_pcd_files(args.pcd_dir)
     if not files:
@@ -358,6 +413,10 @@ def main() -> None:
 
     used = 0
     skipped = 0
+    removed_by_height = 0
+    do_height_filter = not math.isinf(args.max_z) or not math.isinf(args.min_z)
+    if do_height_filter:
+        up_unit = (up / np.linalg.norm(up)).astype(np.float32)
     for order_idx, pcd_path in enumerate(selected):
         base_idx = order_idx if args.pose_index_mode == "order" else numeric_stem(pcd_path)
         pose_idx = base_idx + int(args.pose_index_offset)
@@ -373,6 +432,18 @@ def main() -> None:
         if xyz.shape[0] == 0:
             skipped += 1
             continue
+
+        # Per-frame local height filter (robust to SLAM gravity drift)
+        if args.local_height_filter and do_height_filter:
+            local_h = xyz @ up_unit
+            h_keep = (local_h >= float(args.height_ref) + float(args.min_z)) & \
+                     (local_h <= float(args.height_ref) + float(args.max_z))
+            removed_by_height += int(xyz.shape[0] - np.count_nonzero(h_keep))
+            xyz = xyz[h_keep]
+            rgb = rgb[h_keep]
+            if xyz.shape[0] == 0:
+                skipped += 1
+                continue
 
         T = np.linalg.inv(poses[pose_idx]) if args.invert_pose else poses[pose_idx]
         xyz_w = transform_points(xyz, T)
@@ -390,12 +461,33 @@ def main() -> None:
     xyz_all = np.concatenate(xyz_chunks, axis=0)
     rgb_all = np.concatenate(rgb_chunks, axis=0)
 
+    if not args.local_height_filter and do_height_filter:
+        up = up / np.linalg.norm(up)
+        up = up.astype(np.float32)
+
+        heights = xyz_all @ up
+        height_ref = float(args.height_ref)
+        if args.auto_height_ref_from_ground:
+            ground_rgb_u32 = np.uint32(int(args.ground_rgb_u32) & 0x00FFFFFF)
+            ground_mask = rgb_all == ground_rgb_u32
+            if np.any(ground_mask):
+                height_ref = float(np.median(heights[ground_mask]))
+                print(f"Auto height ref from ground: {height_ref:.4f}")
+            else:
+                print("[WARN] No ground-color points for auto height ref, fallback to --height-ref.")
+
+        keep = (heights <= height_ref + float(args.max_z)) & (heights >= height_ref + float(args.min_z))
+        removed_by_height = int(xyz_all.shape[0] - np.count_nonzero(keep))
+        xyz_all = xyz_all[keep]
+        rgb_all = rgb_all[keep]
+
     xyz_all, rgb_all = voxel_downsample_xyz_rgb(xyz_all, rgb_all, args.voxel_size)
     write_pcd_xyz_rgb(args.output, xyz_all, rgb_all)
 
     print("=== Done ===")
     print(f"Frames used: {used}")
     print(f"Frames skipped: {skipped}")
+    print(f"Points removed by height filter: {removed_by_height} ({'local per-frame' if args.local_height_filter else 'global'})")
     print(f"Points written: {xyz_all.shape[0]}")
     print(f"Output: {args.output}")
 

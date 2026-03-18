@@ -1,6 +1,7 @@
 # map_test中的大文件夹不上传
 map_test/map/
 map_test/pcd/
+map_test/pcd_ground_green/
 map_315
 
 # 编译产物
