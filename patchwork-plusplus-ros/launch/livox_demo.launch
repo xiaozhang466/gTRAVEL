@@ -1,0 +1,22 @@
+<launch>
+  <arg name="input_topic" default="/livox/lidar"/>
+  <arg name="cloud_topic" default="/livox/points"/>
+  <arg name="frame_id" default=""/>
+  <arg name="queue_size" default="10"/>
+  <arg name="rviz" default="false"/>
+
+  <node name="livox_custommsg_to_pointcloud2" pkg="patchworkpp" type="livox_custommsg_to_pointcloud2.py" output="screen">
+    <param name="input_topic" value="$(arg input_topic)"/>
+    <param name="output_topic" value="$(arg cloud_topic)"/>
+    <param name="frame_id" value="$(arg frame_id)"/>
+    <param name="queue_size" value="$(arg queue_size)"/>
+  </node>
+
+  <node name="ground_segmentation" pkg="patchworkpp" type="demo" output="screen">
+    <rosparam command="load" file="$(find patchworkpp)/config/params.yaml"/>
+    <param name="cloud_topic" value="$(arg cloud_topic)"/>
+  </node>
+
+  <node if="$(arg rviz)" name="patchworkpp_rviz" pkg="rviz" type="rviz"
+        args="-d $(find patchworkpp)/rviz/demo.rviz"/>
+</launch>

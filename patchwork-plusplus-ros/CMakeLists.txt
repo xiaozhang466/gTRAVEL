@@ -77,6 +77,10 @@ add_executable(pcd_player src/pcd_player.cpp)
 target_link_libraries(pcd_player ${catkin_LIBRARIES} ${PCL_LIBRARIES} usb-1.0)
 add_dependencies(pcd_player patchworkpp_generate_messages_cpp)
 
+catkin_install_python(PROGRAMS
+  scripts/livox_custommsg_to_pointcloud2.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 # ==== Install ====
 install(TARGETS demo pcd_player

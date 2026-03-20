@@ -63,8 +63,8 @@ def parse_args() -> argparse.Namespace:
                    help="Minimum corridor half-width in meters (default: 0.3).")
     t.add_argument("--max-half-width", type=float, default=1.5,
                    help="Maximum corridor half-width in meters (default: 1.5).")
-    t.add_argument("--safety-margin", type=float, default=0.1,
-                   help="Subtract from green clearance as safety margin (default: 0.1m).")
+    t.add_argument("--safety-margin", type=float, default=0.3,
+                   help="Shrink corridor from green boundary to protect walls (default: 0.3m).")
     t.add_argument("--smoothing-window", type=int, default=30,
                    help="Smooth half-widths over N trajectory points (default: 30).")
     t.add_argument("--min-ground-points", type=int, default=1,
@@ -235,80 +235,135 @@ def smooth_1d(arr: np.ndarray, window: int) -> np.ndarray:
 
 # ─── Track Corridor Builder ──────────────────────────────────────────────────
 
-def compute_per_pose_clearance(
+def compute_trajectory_directions(pose_xy: np.ndarray) -> np.ndarray:
+    """Compute smoothed unit direction + left-normal at each trajectory point."""
+    n = len(pose_xy)
+    dirs = np.zeros((n, 2), dtype=np.float64)
+    for i in range(n):
+        if i == 0:
+            d = pose_xy[min(1, n - 1)] - pose_xy[0]
+        elif i == n - 1:
+            d = pose_xy[-1] - pose_xy[max(0, n - 2)]
+        else:
+            d = pose_xy[i + 1] - pose_xy[i - 1]
+        norm = np.linalg.norm(d)
+        dirs[i] = d / norm if norm > 1e-6 else [1.0, 0.0]
+    # Smooth directions
+    dirs[:, 0] = smooth_1d(dirs[:, 0], 15)
+    dirs[:, 1] = smooth_1d(dirs[:, 1], 15)
+    norms = np.linalg.norm(dirs, axis=1, keepdims=True)
+    norms[norms < 1e-6] = 1.0
+    dirs /= norms
+    return dirs
+
+
+def ray_cast_green(green_mask: np.ndarray,
+                   cx: float, cy: float,
+                   dx: float, dy: float,
+                   max_steps: int) -> int:
+    """Walk from (cx,cy) in direction (dx,dy) on green mask.
+    Return number of steps while still on green cells."""
+    H, W = green_mask.shape
+    ln = math.sqrt(dx * dx + dy * dy)
+    if ln < 1e-9:
+        return 0
+    dx, dy = dx / ln, dy / ln
+    for s in range(1, max_steps + 1):
+        gx = int(round(cx + dx * s))
+        gy = int(round(cy + dy * s))
+        if gx < 0 or gx >= W or gy < 0 or gy >= H:
+            return s  # out of bounds = edge
+        if not green_mask[gy, gx]:
+            return s  # hit non-green = boundary
+    return max_steps
+
+
+def compute_asymmetric_clearance(
     green_mask: np.ndarray,
     pose_xy: np.ndarray,
+    directions: np.ndarray,
     min_x: float, min_y: float, res: float,
-) -> np.ndarray:
+    max_width_m: float,
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Use distance transform on green mask to find max clearance at each trajectory point.
-    Clearance = distance from trajectory point to nearest non-green cell (in meters).
+    Cast perpendicular rays left & right from each trajectory point through
+    the green mask.  Returns (left_widths, right_widths) in meters.
     """
     H, W = green_mask.shape
-    green_u8 = green_mask.astype(np.uint8) * 255
-    dist_pix = cv2.distanceTransform(green_u8, cv2.DIST_L2, 5)
-    dist_m = dist_pix.astype(np.float64) * res
+    max_steps = int(max_width_m / res) + 2
 
-    px = np.floor((pose_xy[:, 0] - min_x) / res).astype(np.int32)
-    py = np.floor((pose_xy[:, 1] - min_y) / res).astype(np.int32)
+    px = (pose_xy[:, 0] - min_x) / res
+    py = (pose_xy[:, 1] - min_y) / res
 
-    clearances = np.zeros(len(pose_xy), dtype=np.float64)
+    # Left normal: rotate direction 90° CCW
+    left_nx = -directions[:, 1]
+    left_ny =  directions[:, 0]
+
+    left_w = np.zeros(len(pose_xy), dtype=np.float64)
+    right_w = np.zeros(len(pose_xy), dtype=np.float64)
+
     for i in range(len(pose_xy)):
-        x, y = int(px[i]), int(py[i])
-        if 0 <= x < W and 0 <= y < H:
-            clearances[i] = dist_m[y, x]
-        else:
-            clearances[i] = 0.0
+        cx_f, cy_f = float(px[i]), float(py[i])
+        lnx, lny = float(left_nx[i]), float(left_ny[i])
 
-    return clearances
+        steps_l = ray_cast_green(green_mask, cx_f, cy_f,  lnx,  lny, max_steps)
+        steps_r = ray_cast_green(green_mask, cx_f, cy_f, -lnx, -lny, max_steps)
+
+        left_w[i] = steps_l * res
+        right_w[i] = steps_r * res
+
+    return left_w, right_w
 
 
-def build_track_corridor(
+def build_track_corridor_asym(
     pose_xy: np.ndarray,
-    half_widths: np.ndarray,
+    directions: np.ndarray,
+    left_widths: np.ndarray,
+    right_widths: np.ndarray,
     min_x: float, min_y: float, res: float,
     W: int, H: int,
 ) -> np.ndarray:
     """
-    Build corridor mask by drawing polygon strips along trajectory with per-point widths.
+    Build corridor mask with independent left/right widths per trajectory point.
     Returns bool mask (H, W).
     """
     px = ((pose_xy[:, 0] - min_x) / res).astype(np.float32)
     py = ((pose_xy[:, 1] - min_y) / res).astype(np.float32)
-    hw_px = (half_widths / res).astype(np.float32)
+    # Left normal in grid coords
+    lnx = (-directions[:, 1]).astype(np.float32)
+    lny = ( directions[:, 0]).astype(np.float32)
+    lw = (left_widths / res).astype(np.float32)
+    rw = (right_widths / res).astype(np.float32)
 
     mask = np.zeros((H, W), dtype=np.uint8)
 
     for i in range(len(px) - 1):
-        p0 = np.array([px[i], py[i]], dtype=np.float32)
-        p1 = np.array([px[i + 1], py[i + 1]], dtype=np.float32)
-        d = p1 - p0
-        seg_len = float(np.linalg.norm(d))
-        if seg_len < 1e-3:
-            continue
-        # Left normal (perpendicular to trajectory direction)
-        n = np.array([-d[1], d[0]], dtype=np.float32) / seg_len
+        p0x, p0y = float(px[i]), float(py[i])
+        p1x, p1y = float(px[i + 1]), float(py[i + 1])
+        n0x, n0y = float(lnx[i]), float(lny[i])
+        n1x, n1y = float(lnx[i + 1]), float(lny[i + 1])
+        lw0, lw1 = float(lw[i]), float(lw[i + 1])
+        rw0, rw1 = float(rw[i]), float(rw[i + 1])
 
-        w0 = float(hw_px[i])
-        w1 = float(hw_px[i + 1])
-
-        # Build quad (trapezoid) for this segment
+        # Quad: left_start, left_end, right_end, right_start
         poly = np.array([
-            p0 + n * w0,   # left side start
-            p1 + n * w1,   # left side end
-            p1 - n * w1,   # right side end
-            p0 - n * w0,   # right side start
+            [p0x + n0x * lw0, p0y + n0y * lw0],   # left start
+            [p1x + n1x * lw1, p1y + n1y * lw1],   # left end
+            [p1x - n1x * rw1, p1y - n1y * rw1],   # right end
+            [p0x - n0x * rw0, p0y - n0y * rw0],   # right start
         ], dtype=np.float32)
-        poly_int = np.round(poly).astype(np.int32)
-        cv2.fillConvexPoly(mask, poly_int, 255)
+        cv2.fillConvexPoly(mask, np.round(poly).astype(np.int32), 255)
 
-        # Round end-caps at each vertex
-        cv2.circle(mask, (int(round(px[i])), int(round(py[i]))),
-                   int(round(w0)), 255, -1)
+        # End-cap at segment start (average of L/R)
+        avg_w = max(1.0, 0.5 * (lw0 + rw0))
+        cv2.circle(mask, (int(round(p0x)), int(round(p0y))),
+                   int(round(avg_w)), 255, -1)
 
     # End-cap for last point
-    cv2.circle(mask, (int(round(px[-1])), int(round(py[-1]))),
-               int(round(hw_px[-1])), 255, -1)
+    i = len(px) - 1
+    avg_w = max(1.0, 0.5 * (float(lw[i]) + float(rw[i])))
+    cv2.circle(mask, (int(round(float(px[i]))), int(round(float(py[i])))),
+               int(round(avg_w)), 255, -1)
 
     return mask > 0
 
@@ -405,25 +460,42 @@ def main() -> None:
 
     print(f"  Green cells: {np.sum(green_mask)}")
 
-    # ── Per-pose clearance from distance transform ───────────────────────
-    print("\nStep 4: Computing per-pose clearance...")
-    clearances = compute_per_pose_clearance(
-        green_mask, pose_xy, min_x, min_y, args.resolution,
+    # ── Per-pose clearance: perpendicular ray-cast (left/right independent) ─
+    print("\nStep 4: Computing asymmetric clearance (L/R ray-cast)...")
+    directions = compute_trajectory_directions(pose_xy)
+    left_raw, right_raw = compute_asymmetric_clearance(
+        green_mask, pose_xy, directions,
+        min_x, min_y, args.resolution, args.max_half_width,
     )
-    print(f"  Raw clearance — min: {clearances.min():.2f}m, "
-          f"max: {clearances.max():.2f}m, mean: {clearances.mean():.2f}m")
+    print(f"  Left  raw — min: {left_raw.min():.2f}m, "
+          f"max: {left_raw.max():.2f}m, mean: {left_raw.mean():.2f}m")
+    print(f"  Right raw — min: {right_raw.min():.2f}m, "
+          f"max: {right_raw.max():.2f}m, mean: {right_raw.mean():.2f}m")
 
-    # Apply safety margin, smooth, and clamp
-    half_widths = clearances - args.safety_margin
-    half_widths = smooth_1d(half_widths, args.smoothing_window)
-    half_widths = np.clip(half_widths, args.min_half_width, args.max_half_width)
-    print(f"  Final half-width — min: {half_widths.min():.2f}m, "
-          f"max: {half_widths.max():.2f}m, mean: {half_widths.mean():.2f}m")
+    # Apply safety margin, smooth, and clamp (independently for L/R)
+    left_w = smooth_1d(left_raw - args.safety_margin, args.smoothing_window)
+    right_w = smooth_1d(right_raw - args.safety_margin, args.smoothing_window)
+    left_w = np.clip(left_w, args.min_half_width, args.max_half_width)
+    right_w = np.clip(right_w, args.min_half_width, args.max_half_width)
+    print(f"  Final left  — min: {left_w.min():.2f}m, max: {left_w.max():.2f}m")
+    print(f"  Final right — min: {right_w.min():.2f}m, max: {right_w.max():.2f}m")
 
-    # ── Build track corridor ─────────────────────────────────────────────
-    print("\nStep 5: Building track corridor...")
-    corridor = build_track_corridor(
-        pose_xy, half_widths, min_x, min_y, args.resolution, W, H,
+    # Save per-pose widths to CSV
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = args.output_dir / f"{args.map_name}_widths.csv"
+    with csv_path.open("w") as f:
+        f.write("pose_idx,x,y,left_raw,right_raw,left_final,right_final\n")
+        for i in range(len(pose_xy)):
+            f.write(f"{i},{pose_xy[i,0]:.4f},{pose_xy[i,1]:.4f},"
+                    f"{left_raw[i]:.4f},{right_raw[i]:.4f},"
+                    f"{left_w[i]:.4f},{right_w[i]:.4f}\n")
+    print(f"  Widths CSV: {csv_path}")
+
+    # ── Build track corridor (asymmetric L/R) ─────────────────────────────
+    print("\nStep 5: Building asymmetric track corridor...")
+    corridor = build_track_corridor_asym(
+        pose_xy, directions, left_w, right_w,
+        min_x, min_y, args.resolution, W, H,
     )
     print(f"  Corridor cells: {np.sum(corridor)}")
 
