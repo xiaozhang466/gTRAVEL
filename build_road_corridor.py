@@ -4,8 +4,8 @@ Build road corridor with AUTO-DETERMINED width from the bird's-eye view.
 
 Method:
   1. Project PCD to 2D bird's-eye view
-  2. Build green ground mask → distance transform → clearance map
-  3. Sample clearance along trajectory → auto-determine road half-width
+  2. Build point coverage grid → Gaussian-smoothed density map
+  3. Perpendicular profile analysis along trajectory → auto-determine road half-width
   4. Dilate trajectory by auto half-width → smooth road mask
   5. Map 2D road mask back to 3D → remove points → save PCD
 
@@ -96,6 +96,71 @@ def in_grid(gx, gy, w, h):
     return (gx>=0)&(gy>=0)&(gx<w)&(gy<h)
 
 # ---------------------------------------------------------------------------
+# Perpendicular profile road width detection
+# ---------------------------------------------------------------------------
+def compute_road_widths_profile(pose_xy, coverage_smooth, x_min, y_min, res,
+                                gw, gh, max_search_m, obstacle_threshold,
+                                skip_near_m=0.5, min_hit_cells=3,
+                                heading_window=10):
+    """
+    For each trajectory point, walk perpendicular to the heading direction.
+    Detect road edge where non-ground (white) point density EXCEEDS
+    obstacle_threshold for min_hit_cells consecutive cells.
+    Returns (hw_left, hw_right) arrays in metres – one per side.
+    """
+    n = len(pose_xy)
+    hw_left  = np.full(n, max_search_m)
+    hw_right = np.full(n, max_search_m)
+    max_px = int(max_search_m / res)
+    skip_px = max(1, int(skip_near_m / res))  # skip near-trajectory ghost points
+
+    # --- compute smoothed headings ---
+    headings = np.zeros(n)
+    for i in range(n):
+        i0 = max(0, i - heading_window)
+        i1 = min(n - 1, i + heading_window)
+        dx = pose_xy[i1, 0] - pose_xy[i0, 0]
+        dy = pose_xy[i1, 1] - pose_xy[i0, 1]
+        if math.hypot(dx, dy) > 1e-6:
+            headings[i] = math.atan2(dy, dx)
+        elif i > 0:
+            headings[i] = headings[i - 1]
+
+    # --- per-point perpendicular scan ---
+    for i in range(n):
+        perp = headings[i] + math.pi / 2
+        cos_p, sin_p = math.cos(perp), math.sin(perp)
+        cx = int((pose_xy[i, 0] - x_min) / res)
+        cy = int((pose_xy[i, 1] - y_min) / res)
+        if not (0 <= cx < gw and 0 <= cy < gh):
+            continue
+
+        for side_idx, sign in enumerate((1, -1)):  # left / right
+            hits = 0
+            detected = max_search_m
+            for d in range(skip_px, max_px):
+                sx = cx + int(sign * d * cos_p)
+                sy = cy + int(sign * d * sin_p)
+                if 0 <= sx < gw and 0 <= sy < gh:
+                    if coverage_smooth[sy, sx] > obstacle_threshold:
+                        hits += 1
+                        if hits >= min_hit_cells:
+                            detected = (d - min_hit_cells + 1) * res
+                            break
+                    else:
+                        hits = 0
+                else:
+                    detected = d * res
+                    break
+            if side_idx == 0:
+                hw_left[i] = detected
+            else:
+                hw_right[i] = detected
+
+    return hw_left, hw_right
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def parse_args():
@@ -107,9 +172,15 @@ def parse_args():
     p.add_argument("--resolution", type=float, default=0.05)
     p.add_argument("--max-half-width", type=float, default=2.5)
     p.add_argument("--min-half-width", type=float, default=0.5)
-    p.add_argument("--width-percentile", type=float, default=50.0,
-                   help="Percentile of trajectory clearances (50=median)")
+    p.add_argument("--width-percentile", type=float, default=60.0,
+                   help="Percentile of detected half-widths (75=favor wider measurements)")
     p.add_argument("--padding", type=float, default=1.0)
+    p.add_argument("--density-sigma", type=float, default=0.5,
+                   help="Gaussian sigma (metres) for coverage smoothing")
+    p.add_argument("--obstacle-threshold", type=float, default=75.0,
+                   help="Road edge where non-ground point density exceeds this value")
+    p.add_argument("--skip-near", type=float, default=0.5,
+                   help="Ignore non-ground points within this distance (m) of trajectory (e.g. human ghost)")
     return p.parse_args()
 
 def main():
@@ -121,7 +192,7 @@ def main():
     res = args.resolution
 
     print("="*60, flush=True)
-    print("  Auto Road Corridor (Distance Transform + Dilation)", flush=True)
+    print("  Auto Road Corridor (Perpendicular Profile + Dilation)", flush=True)
     print("="*60, flush=True)
 
     # --- 1. Load ---
@@ -153,42 +224,66 @@ def main():
     gh = int(math.ceil((y_max - y_min) / res))
     print(f"  Grid: {gw} x {gh}", flush=True)
 
-    green_grid = np.zeros((gh, gw), dtype=np.uint8)
-    gx_g, gy_g = w2g(all_x[green], all_y[green], x_min, y_min, res)
-    ok = in_grid(gx_g, gy_g, gw, gh)
-    green_grid[gy_g[ok], gx_g[ok]] = 255
+    # --- 3. Non-green coverage grid (road surface indicator) ---
+    print(f"\n[3/7] Building non-green coverage grid", flush=True)
+    non_green = valid & ~green
+    coverage_grid = np.zeros((gh, gw), dtype=np.uint8)
+    gx_cov, gy_cov = w2g(all_x[non_green], all_y[non_green], x_min, y_min, res)
+    ok_cov = in_grid(gx_cov, gy_cov, gw, gh)
+    coverage_grid[gy_cov[ok_cov], gx_cov[ok_cov]] = 255
 
-    # --- 3. Fill green mask ---
-    print(f"\n[3/7] Filling green mask", flush=True)
-    k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    green_filled = cv2.morphologyEx(green_grid, cv2.MORPH_CLOSE, k5, iterations=5)
-    green_filled = cv2.dilate(green_filled, k3, iterations=2)
-    green_filled = cv2.morphologyEx(green_filled, cv2.MORPH_CLOSE, k5, iterations=3)
+    coverage_closed = cv2.morphologyEx(coverage_grid, cv2.MORPH_CLOSE, k3, iterations=1)
 
-    # --- 4. Distance transform ---
-    print(f"\n[4/7] Distance transform → auto width", flush=True)
-    dist_px = cv2.distanceTransform(green_filled, cv2.DIST_L2, 5)
-    dist_m = dist_px * res
+    sigma_px = max(1.0, args.density_sigma / res)
+    ksize = int(sigma_px * 6) | 1          # must be odd
+    coverage_smooth = cv2.GaussianBlur(
+        coverage_closed.astype(np.float32), (ksize, ksize), sigmaX=sigma_px)
+    print(f"  Non-green cells: {np.sum(coverage_grid > 0):,} / Grid total: {gw*gh:,}", flush=True)
+    print(f"  Gaussian sigma: {args.density_sigma}m ({sigma_px:.0f}px)", flush=True)
 
-    px = np.floor((pose_xy[:,0] - x_min) / res).astype(np.int32)
-    py = np.floor((pose_xy[:,1] - y_min) / res).astype(np.int32)
-    traj_ok = in_grid(px, py, gw, gh)
-    clearances = np.zeros(len(pose_xy))
-    clearances[traj_ok] = dist_m[py[traj_ok], px[traj_ok]]
+    # Diagnostic: coverage at a few trajectory points
+    mid = len(pose_xy) // 2
+    for idx in [0, mid, len(pose_xy)-1]:
+        cx = int((pose_xy[idx, 0] - x_min) / res)
+        cy = int((pose_xy[idx, 1] - y_min) / res)
+        if 0 <= cx < gw and 0 <= cy < gh:
+            print(f"  [diag] pose[{idx}] coverage_smooth={coverage_smooth[cy,cx]:.1f}", flush=True)
 
-    valid_c = clearances[clearances > 0]
-    auto_hw = float(np.percentile(valid_c, args.width_percentile)) if len(valid_c) > 0 else args.min_half_width
+    # --- 4. Perpendicular profile → auto width ---
+    print(f"\n[4/7] Perpendicular profile → auto width (obstacle detection)", flush=True)
+    search_limit = args.max_half_width + 1.0
+    print(f"  Skip near-trajectory: {args.skip_near}m", flush=True)
+    hw_left, hw_right = compute_road_widths_profile(
+        pose_xy, coverage_smooth, x_min, y_min, res, gw, gh,
+        max_search_m=search_limit, skip_near_m=args.skip_near,
+        obstacle_threshold=args.obstacle_threshold)
+
+    # Pool all valid left/right measurements independently
+    all_hw = np.concatenate([hw_left, hw_right])
+    valid_hw = all_hw[all_hw < search_limit - 0.01]
+    if len(valid_hw) > 0:
+        auto_hw = float(np.percentile(valid_hw, args.width_percentile))
+        print(f"  All measurements: {len(valid_hw)} valid / {len(all_hw)} total", flush=True)
+        print(f"  Distribution: min={valid_hw.min():.2f}m, p25={np.percentile(valid_hw,25):.2f}m, "
+              f"median={np.median(valid_hw):.2f}m, p75={np.percentile(valid_hw,75):.2f}m, "
+              f"max={valid_hw.max():.2f}m", flush=True)
+        print(f"  Using p{args.width_percentile:.0f} = {auto_hw:.2f}m", flush=True)
+    else:
+        auto_hw = args.min_half_width
+        print(f"  ⚠ No road edges detected, using min-half-width", flush=True)
+
     auto_hw = max(args.min_half_width, min(args.max_half_width, auto_hw))
-    safety_margin = 0.20  # 安全距离
+    safety_margin = 0.20
     auto_hw_safe = max(args.min_half_width, auto_hw - safety_margin)
 
-    print(f"  Clearance: min={valid_c.min():.2f}m, max={valid_c.max():.2f}m, "
-          f"median={np.median(valid_c):.2f}m", flush=True)
     print(f"  ★ Auto half-width (raw): {auto_hw:.2f}m", flush=True)
     print(f"  ★ Safety margin: -{safety_margin}m", flush=True)
     print(f"  ★ Final half-width: {auto_hw_safe:.2f}m (total: {auto_hw_safe*2:.2f}m)", flush=True)
     auto_hw = auto_hw_safe
+
+    px = np.floor((pose_xy[:,0] - x_min) / res).astype(np.int32)
+    py = np.floor((pose_xy[:,1] - y_min) / res).astype(np.int32)
 
     # --- 5. Dilate trajectory ---
     print(f"\n[5/7] Building road mask", flush=True)
